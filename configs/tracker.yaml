@@ -1,0 +1,3 @@
+# Tracker-specific config. Model / conf / iou / imgsz are inherited from detector.yaml.
+tracker_type: bytetrack.yaml   # switch to botsort.yaml for comparison
+persist: true
