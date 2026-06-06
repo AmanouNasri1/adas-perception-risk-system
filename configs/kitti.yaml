@@ -1,0 +1,19 @@
+# KITTI fine-tuning dataset config for Ultralytics YOLO.
+# Used in Google Colab — fill in the Drive path before training.
+#
+# Class mapping vs COCO pretrained model:
+#   0 person    ← KITTI Pedestrian, Person_sitting
+#   1 bicycle   ← KITTI Cyclist
+#   2 car       ← KITTI Car, Van
+#   3 motorcycle  (no KITTI source; pretrained weights retained)
+#   4 bus       ← KITTI Tram
+#   5 truck     ← KITTI Truck
+
+# Set this to where you uploaded the converted dataset on Google Drive.
+path: /content/drive/MyDrive/adas_project/kitti_yolo
+
+train: images/train
+val:   images/val
+
+nc: 6
+names: [person, bicycle, car, motorcycle, bus, truck]
