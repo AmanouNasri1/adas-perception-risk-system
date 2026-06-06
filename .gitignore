@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# datasets and heavy outputs
+data/raw/
+data/kitti/
+outputs/demo/*.mp4
+outputs/detections/*.mp4
+outputs/tracking/*.mp4
+outputs/runs/
+runs/
+# model weights
+*.pt
+*.onnx
+*.engine
+# OS/editor
+.DS_Store
+.vscode/
