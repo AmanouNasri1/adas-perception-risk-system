@@ -1,0 +1,37 @@
+# Risk-zone polygons defined as (x, y) ratios in [0, 1] relative to frame size.
+# At runtime: scale by (frame_width, frame_height).
+# Reference geometry derived from the 1280x720 values in the project plan (§10.1).
+
+front_zone:
+  type: polygon
+  points_ratio:
+    - [0.375, 1.000]   # bottom-left
+    - [0.625, 1.000]   # bottom-right
+    - [0.578, 0.583]   # top-right
+    - [0.422, 0.583]   # top-left
+
+pedestrian_cyclist_zone:
+  type: polygon
+  points_ratio:
+    - [0.281, 1.000]
+    - [0.719, 1.000]
+    - [0.641, 0.500]
+    - [0.359, 0.500]
+
+close_vehicle:
+  min_bbox_height_ratio: 0.25   # bbox height / frame height
+  min_bottom_y_ratio: 0.65      # bbox bottom y / frame height
+
+# COCO-class → warning mapping (Phase 3).
+# Only COCO names; "van", "pedestrian", "cyclist" are never emitted.
+# person  → PEDESTRIAN RISK (if in pedestrian_cyclist_zone)
+# bicycle → CYCLIST RISK    (if in pedestrian_cyclist_zone)
+# When a person and a bicycle box overlap substantially (IoU > 0.3), emit CYCLIST only.
+# car / truck / bus / motorcycle → VEHICLE TOO CLOSE or FRONT OBJECT
+warning_class_map:
+  person: pedestrian
+  bicycle: cyclist
+  car: vehicle
+  truck: vehicle
+  bus: vehicle
+  motorcycle: vehicle
