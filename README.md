@@ -10,6 +10,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → ri
 | Phase 2 — Tracking  | Done | `outputs/logs/tracking_results.csv` |
 | Phase 3 — ADAS warning engine | Done | `outputs/logs/warnings.csv`, `outputs/demo/adas_demo_v1.mp4` |
 | Phase 4 — Metrics & polish | Done | `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png` |
+| V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, `outputs/figures/tracker_comparison.png`, `outputs/figures/failure_case_*.png`, `outputs/reports/tracker_comparison.csv` |
 
 ## Architecture
 
@@ -97,6 +98,15 @@ python scripts/compute_metrics.py
 
 Output: `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png`.
 
+### V2 — Evaluation
+
+```powershell
+python scripts/run_evaluation.py
+```
+
+Output: confidence histogram per class, ByteTrack/BoT-SORT comparison chart and CSV,
+and three annotated failure-case screenshots extracted from the demo video.
+
 ## Dataset
 
 See [data/README.md](data/README.md).
@@ -123,8 +133,19 @@ Measured on `test_video.mp4` (640×360, 29.97 fps, 900 frames) with `yolo11s.pt`
 | Average track length | 27.9 frames |
 | Longest track | 270 frames |
 
-ByteTrack vs BoT-SORT: BoT-SORT assigned 115 IDs (vs 126) with a median track length of 9 frames
-(vs 6). BoT-SORT shows slightly better ID stability; ByteTrack is marginally faster.
+**ByteTrack vs BoT-SORT quantitative comparison** (`outputs/reports/tracker_comparison.csv`):
+
+| Metric | ByteTrack | BoT-SORT |
+|--------|-----------|---------|
+| Unique track IDs (fewer = stable) | 126 | **115** |
+| Total detections | 3517 | **3660** |
+| Avg track length (frames) | 27.9 | **31.8** |
+| Median track length (frames) | 6 | **9** |
+| Tracks ≥ 10 frames | 51 | **53** |
+| Longest track (frames) | 270 | 271 |
+
+BoT-SORT wins on all stability metrics for this clip. ByteTrack is kept as default because it is
+marginally faster and is the established baseline for later V3–V5 tracker comparisons.
 
 ### Detections
 

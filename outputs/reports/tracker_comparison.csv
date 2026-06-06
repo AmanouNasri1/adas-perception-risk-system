@@ -1,0 +1,7 @@
+metric,bytetrack,botsort,winner
+unique_track_ids,126.0,115.0,botsort
+total_detection_rows,3517.0,3660.0,botsort
+avg_track_length_frames,27.9,31.8,botsort
+median_track_length_frames,6.0,9.0,botsort
+tracks_ge_10_frames,51.0,53.0,botsort
+max_track_length_frames,270.0,271.0,botsort
