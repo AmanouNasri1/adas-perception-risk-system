@@ -11,6 +11,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → ri
 | Phase 3 — ADAS warning engine | Done | `outputs/logs/warnings.csv`, `outputs/demo/adas_demo_v1.mp4` |
 | Phase 4 — Metrics & polish | Done | `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png` |
 | V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, `outputs/figures/tracker_comparison.png`, `outputs/figures/failure_case_*.png`, `outputs/reports/tracker_comparison.csv` |
+| V3 — KITTI fine-tuning | Done | `outputs/reports/kitti_training_results.csv`, `outputs/figures/kitti_training_curve.png` |
 
 ## Architecture
 
@@ -169,6 +170,24 @@ marginally faster and is the established baseline for later V3–V5 tracker comp
 
 Warnings fired in 577 of 900 frames (64%). The high rate is expected at V1 and reflects
 the image-coordinate zone design without distance estimation — see Limitations.
+
+### V3 — KITTI Fine-Tuning
+
+Fine-tuned `yolo11s.pt` on KITTI object detection (7481 images, 80/20 split, 50 epochs, batch 16,
+imgsz 640) in Google Colab on a T4 GPU. Weights stored on Google Drive — not in this repo.
+
+| Metric | Value |
+|--------|-------|
+| Best mAP@0.5 | **0.922** (epoch 49) |
+| Best mAP@0.5:0.95 | **0.700** (epoch 50) |
+| Final precision | 0.924 |
+| Final recall | 0.855 |
+| Final val box loss | 0.684 |
+| Training time | 116 min (Colab T4) |
+
+The model converged smoothly over 50 epochs with no plateau; losses were still decreasing
+at epoch 50, suggesting additional epochs would yield marginal gains.
+Training curve: `outputs/figures/kitti_training_curve.png`.
 
 ## Limitations
 
