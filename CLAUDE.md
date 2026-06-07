@@ -8,20 +8,17 @@ Real-Time ADAS Perception and Risk Warning System: a computer-vision pipeline th
 
 The full plan is at `docs/ADAS_Perception_Risk_System_Project_Plan.pdf`. That PDF is the specification — consult it for detail (section numbers are referenced below). This file is the working contract for *how* to build it.
 
-Current state: Phase 1 detection has been run — `scripts/run_detection.py` was executed on a sample video. Phases 2–4 are not built yet.
+Current state: V1–V4 are fully built and committed. The repo is clean and all audit issues from session 1 are resolved. The next phase is **V5 — Time-to-collision**.
 
-## Before any new work: audit and reconcile the repo
+## Completed phases (do not re-audit or re-implement)
 
-The PDF was written as a plan in advance, so the code on disk may have drifted from it or contain bugs that only surface at runtime. On your first task in this repo, run the audit below and fix what is broken **before** starting the next phase. Summarize what you changed and why.
-
-1. **Read the actual repo first.** Print the tree and read every file under `scripts/`, `src/`, and `configs/`. Compare with the intended structure in PDF §7.8 and note anything missing (folders, `__init__.py` files, configs).
-2. **COCO class names.** The pretrained YOLO model emits COCO names: `person, bicycle, car, motorcycle, bus, truck`. It never emits `pedestrian`, `cyclist`, or `van`. The warning engine (§10.3) references those three, which are dead branches that silently never fire. Confirm the intended mapping (`person` → pedestrian risk, `bicycle` → cyclist risk) and remove or comment the dead names so the logic isn't misleading. Note that a cycling person is detected as both `person` and `bicycle`, so the same human can trigger two warnings — decide how to handle that.
-3. **Config vs. code.** `scripts/run_detection.py` (§8.2) takes CLI args but never loads `configs/detector.yaml`. Pick one source of truth — config-driven is preferred — and make scripts read the YAML with CLI flags as overrides.
-4. **Risk-zone resolution.** `configs/risk_zones.yaml` (§10.1) hardcodes polygon points for 1280×720, but the sample video may have a different resolution, which misaligns the zones. Scale zones to the actual frame size at runtime, or define them as 0–1 ratios.
-5. **Repo hygiene.** Confirm `.gitignore` (§7.7) exists and that no model weights (`*.pt`/`*.onnx`/`*.engine`), datasets, or output videos are tracked. Flag anything heavy that is already staged or committed.
-6. **Reproducibility.** Confirm `requirements.txt` exists and matches the installed packages, and that the README records the exact detection command that worked (§8.4).
-
-Proceed to phase work only once the audit is clean or the fixes are committed.
+- **Phase 1 (Detection):** `scripts/run_detection.py` reads `configs/detector.yaml`, outputs to `outputs/detections/predict/`.
+- **Phase 2 (Tracking):** `scripts/run_tracking.py`, ByteTrack default, BoT-SORT flag. Outputs `outputs/logs/tracking_results.csv`.
+- **Phase 3 (ADAS demo):** `scripts/run_adas_demo.py` — full pipeline with zone drawing, warnings, annotated video, and per-frame timing.
+- **Phase 4 (Metrics):** `scripts/compute_metrics.py` — FPS plot and metrics CSV.
+- **V2 (Evaluation):** `scripts/run_evaluation.py` — confidence histogram, tracker comparison, failure-case screenshots.
+- **V3 (KITTI fine-tuning):** Completed in Google Colab. `scripts/kitti_to_yolo.py` converts labels. `configs/kitti.yaml` is the Colab dataset config. Fine-tuned weights at `D:\kitti\weights\yolo11s_kitti.pt` (external HDD, gitignored). Best mAP@0.5 = 0.922 after 50 epochs.
+- **V4 (Distance estimation):** `src/adas_perception/risk/distance.py` — `D = f_y × H_real / h_bbox`. `configs/camera.yaml` holds default focal length and per-class heights. `--calib` flag accepts a KITTI P2 file. Distance shown on bboxes and in HUD; `distance_m` column added to `warnings.csv`.
 
 ## Environment and commands (Windows 11 / PowerShell)
 
@@ -29,10 +26,15 @@ Proceed to phase work only once the audit is clean or the fixes are committed.
 - Python is 3.10/3.11 for PyTorch + CUDA compatibility; don't switch interpreters casually.
 - Install PyTorch from the official selector (https://pytorch.org/get-started/locally/) — that is the source of truth, never hardcode a wheel/CUDA version. GPU is an RTX 3050; CPU fallback is fine for development.
 - Detection: `python scripts/run_detection.py --source data/samples/test_video.mp4`
-- Tracking (Phase 2): `python scripts/run_tracking.py --source data/samples/test_video.mp4 --tracker bytetrack.yaml`
-- Models: `yolo11s.pt` by default, `yolo11n.pt` if inference is slow.
-- Verify GPU when needed: `python -c "import torch; print(torch.cuda.is_available())"`
-- Training runs in Google Colab, not locally, and only after V1 is stable.
+- Tracking: `python scripts/run_tracking.py --source data/samples/test_video.mp4`
+- ADAS demo (main script): `python scripts/run_adas_demo.py --source data/samples/test_video.mp4`
+- ADAS demo with KITTI calib: add `--calib D:\kitti\training\calib\000042.txt`
+- Metrics: `python scripts/compute_metrics.py`
+- Evaluation: `python scripts/run_evaluation.py`
+- Active model: `D:\kitti\weights\yolo11s_kitti.pt` (fine-tuned, set in `configs/detector.yaml`). Use `yolo11s.pt` if the HDD path is unavailable.
+- Active classes: car, truck, bus, motorcycle (person and bicycle removed from `configs/detector.yaml` — intentional for V4 vehicle-distance focus).
+- Verify GPU: `python -c "import torch; print(torch.cuda.is_available())"`
+- Training runs in Google Colab, not locally.
 
 ## Architecture
 
@@ -46,11 +48,10 @@ Reusable logic lives in the package `src/adas_perception/` (submodules `detectio
 
 Each phase has explicit acceptance criteria in the PDF; meet them before moving on.
 
-- **Phase 1 — Detection** (done; verify during the audit): YOLO on an image and a video, annotated output saved (§8.4).
-- **Phase 2 — Tracking:** `scripts/run_tracking.py` with stable IDs across frames and `outputs/logs/tracking_results.csv` (frame, track_id, class_id, class_name, confidence, x1, y1, x2, y2). Compare ByteTrack vs. BoT-SORT qualitatively (§9.4).
-- **Phase 3 — ADAS warning engine:** implement `src/adas_perception/risk/warning_engine.py` and `scripts/run_adas_demo.py`; draw the front zone and pedestrian/cyclist zone, fire warnings, and log `outputs/logs/warnings.csv`. False positives are expected — document them, don't hide them (§10.4).
-- **Phase 4 — Demo polish and metrics:** `outputs/demo/adas_demo_v1.mp4` with FPS and warning overlays, an FPS plot at `outputs/figures/fps_plot.png`, `outputs/reports/demo_metrics.csv`, and README v1 (§11).
-- **Later (V2–V7, §6):** evaluation, KITTI fine-tuning in Colab, distance estimation, time-to-collision, lane-aware risk, then the publication package. Do not pull these into V1.
+- **Phase 1–4 and V2–V4:** Done. See "Completed phases" above.
+- **V5 — Time-to-collision (next):** Estimate TTC from the velocity of each tracked object's centroid across frames. `TTC = distance / approach_speed`. Requires a distance history buffer per track_id (use the `distance_m` values already logged in `warnings.csv`). Add `ttc_s` column to `warnings.csv`. Fire a TTC warning (e.g. `TTC < 3s`) as a new high-priority warning tier. Implement in `src/adas_perception/risk/ttc.py`, surface in `run_adas_demo.py`.
+- **V6 — Lane/road-zone awareness (§6):** Improve risk zones using road-area approximation.
+- **V7 — Publication package (§6):** Technical report PDF, slides, CV bullets, thesis proposal.
 
 ## Conventions
 

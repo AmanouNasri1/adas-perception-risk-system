@@ -1,18 +1,21 @@
 # Real-Time ADAS Perception and Risk Warning System
 
-Computer-vision pipeline: YOLO object detection → multi-object tracking → risk-zone analysis → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
+Computer-vision pipeline: YOLO object detection → multi-object tracking → risk-zone analysis → distance estimation → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
 
 ## Overview
 
 | Phase | Status | Key output |
 |-------|--------|------------|
 | Phase 1 — Detection | Done | `outputs/detections/predict/` |
-| Phase 2 — Tracking  | Done | `outputs/logs/tracking_results.csv` |
+| Phase 2 — Tracking | Done | `outputs/logs/tracking_results.csv` |
 | Phase 3 — ADAS warning engine | Done | `outputs/logs/warnings.csv`, `outputs/demo/adas_demo_v1.mp4` |
 | Phase 4 — Metrics & polish | Done | `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png` |
-| V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, `outputs/figures/tracker_comparison.png`, `outputs/figures/failure_case_*.png`, `outputs/reports/tracker_comparison.csv` |
+| V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, tracker comparison, failure-case screenshots |
 | V3 — KITTI fine-tuning | Done | `outputs/reports/kitti_training_results.csv`, `outputs/figures/kitti_training_curve.png` |
-| V4 — Distance estimation | Done | Distance overlay on demo video, `distance_m` column in `warnings.csv` |
+| V4 — Distance estimation | Done | `~Xm` overlay on video, `distance_m` column in `warnings.csv` |
+| V5 — Time-to-collision | Upcoming | TTC from tracked centroid velocity |
+| V6 — Lane/zone awareness | Upcoming | Road-area-aware risk boundaries |
+| V7 — Publication package | Upcoming | Report, slides, CV bullets, thesis proposal |
 
 ## Architecture
 
@@ -23,7 +26,7 @@ source video
 Frame loader (cv2.VideoCapture)
     │
     ▼
-YOLO detector  (yolo11s.pt, 6-class COCO subset)
+YOLO detector  (yolo11s_kitti.pt fine-tuned, or yolo11s.pt pretrained)
     │
     ▼
 ByteTrack tracker  (persistent IDs across frames)
@@ -32,15 +35,19 @@ ByteTrack tracker  (persistent IDs across frames)
 Risk-zone analyzer  (polygon intersection, ratio-scaled zones)
     │
     ▼
+Distance estimator  (D = f_y × H_real / h_bbox, heuristic or KITTI-calibrated)
+    │
+    ▼
 ADAS warning engine  (PEDESTRIAN RISK / CYCLIST RISK / VEHICLE TOO CLOSE / FRONT OBJECT)
     │
     ▼
-Annotator  (zone overlay + color-coded bboxes + HUD)
+Annotator  (zone overlay + color-coded bboxes + distance labels + HUD)
     │
     ├──▶  outputs/demo/adas_demo_v1.mp4
-    ├──▶  outputs/logs/warnings.csv
+    ├──▶  outputs/logs/warnings.csv          (frame, track_id, class, warning, distance_m, bbox)
     ├──▶  outputs/logs/tracking_results.csv
-    └──▶  outputs/reports/demo_metrics.csv + outputs/figures/fps_plot.png
+    ├──▶  outputs/logs/frame_timings.csv
+    └──▶  outputs/reports/  +  outputs/figures/
 ```
 
 ## Installation
@@ -48,7 +55,7 @@ Annotator  (zone overlay + color-coded bboxes + HUD)
 Requires Python 3.10 or 3.11. GPU (CUDA) recommended; CPU fallback works.
 
 ```powershell
-git clone <repo-url>
+git clone https://github.com/AmanouNasri1/adas-perception-risk-system.git
 cd adas-perception-risk-system
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -62,62 +69,65 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+Place a short driving clip at `data/samples/test_video.mp4` (see [data/README.md](data/README.md)).
+The fine-tuned KITTI model (`yolo11s_kitti.pt`) is stored on Google Drive — see V3 below. The pretrained `yolo11s.pt` downloads automatically on first run.
+
 ## Usage
 
-### Phase 1 — Detection
-
+### Detection (Phase 1)
 ```powershell
 python scripts/run_detection.py --source data/samples/test_video.mp4
 ```
+Output: `outputs/detections/predict/`. Config: `configs/detector.yaml`; all values overridable via CLI.
 
-Output: `outputs/detections/predict/`. Config lives in `configs/detector.yaml`; all values
-are overridable via CLI flags (`--model`, `--conf`, `--iou`, `--imgsz`).
-
-### Phase 2 — Tracking
-
+### Tracking (Phase 2)
 ```powershell
 python scripts/run_tracking.py --source data/samples/test_video.mp4
 # BoT-SORT comparison:
 python scripts/run_tracking.py --source data/samples/test_video.mp4 --tracker botsort.yaml
 ```
-
 Output: tracked video + `outputs/logs/tracking_results.csv`.
 
-### Phase 3 — ADAS demo
-
+### ADAS demo with distance estimation (Phase 3 / V4)
 ```powershell
+# Heuristic distance (default focal length from configs/camera.yaml):
 python scripts/run_adas_demo.py --source data/samples/test_video.mp4
-```
 
-Output: `outputs/demo/adas_demo_v1.mp4`, `outputs/logs/warnings.csv`,
+# Calibration-based distance (KITTI P2 matrix):
+python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
+    --calib D:\kitti\training\calib\000042.txt
+```
+Output: `outputs/demo/adas_demo_v1.mp4`, `outputs/logs/warnings.csv` (with `distance_m`),
 `outputs/logs/tracking_results.csv`, `outputs/logs/frame_timings.csv`.
 
-### Phase 4 — Metrics
-
+### Metrics (Phase 4)
 ```powershell
 python scripts/compute_metrics.py
 ```
-
 Output: `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png`.
 
-### V2 — Evaluation
-
+### Evaluation (V2)
 ```powershell
 python scripts/run_evaluation.py
 ```
+Output: confidence histogram, ByteTrack/BoT-SORT comparison chart and CSV, three failure-case screenshots.
 
-Output: confidence histogram per class, ByteTrack/BoT-SORT comparison chart and CSV,
-and three annotated failure-case screenshots extracted from the demo video.
+### KITTI label conversion (V3 prep)
+```powershell
+python scripts/kitti_to_yolo.py `
+    --kitti-images D:\kitti\training\image_2 `
+    --kitti-labels D:\kitti\training\label_2 `
+    --out D:\kitti\kitti_yolo
+```
+Output: YOLO-format dataset at `--out`, ready to upload to Google Drive for Colab fine-tuning.
 
 ## Dataset
 
-See [data/README.md](data/README.md).
+See [data/README.md](data/README.md). KITTI data and model weights are stored on an external HDD and Google Drive — not committed to this repo.
 
 ## Results
 
-Measured on `test_video.mp4` (640×360, 29.97 fps, 900 frames) with `yolo11s.pt` on an RTX 3050.
-
-### Runtime
+### V1 baseline — pretrained `yolo11s.pt` on `test_video.mp4` (640×360, 900 frames, RTX 3050)
 
 | Metric | Value |
 |--------|-------|
@@ -126,56 +136,13 @@ Measured on `test_video.mp4` (640×360, 29.97 fps, 900 frames) with `yolo11s.pt`
 | p5 FPS (worst 5%) | 32.5 |
 | Avg YOLO inference | 13.3 ms/frame |
 | Avg annotation time | 3.6 ms/frame |
-
-### Tracking (ByteTrack)
-
-| Metric | Value |
-|--------|-------|
 | Unique track IDs | 126 |
 | Average track length | 27.9 frames |
-| Longest track | 270 frames |
+| Total warning events | 1330 (577/900 frames) |
 
-**ByteTrack vs BoT-SORT quantitative comparison** (`outputs/reports/tracker_comparison.csv`):
+### V3 — KITTI fine-tuning (`yolo11s_kitti.pt`)
 
-| Metric | ByteTrack | BoT-SORT |
-|--------|-----------|---------|
-| Unique track IDs (fewer = stable) | 126 | **115** |
-| Total detections | 3517 | **3660** |
-| Avg track length (frames) | 27.9 | **31.8** |
-| Median track length (frames) | 6 | **9** |
-| Tracks ≥ 10 frames | 51 | **53** |
-| Longest track (frames) | 270 | 271 |
-
-BoT-SORT wins on all stability metrics for this clip. ByteTrack is kept as default because it is
-marginally faster and is the established baseline for later V3–V5 tracker comparisons.
-
-### Detections
-
-| Class | Detections |
-|-------|-----------|
-| person | 1918 |
-| car | 1229 |
-| truck | 263 |
-| bus | 68 |
-| bicycle | 38 |
-| motorcycle | 1 |
-
-### ADAS Warnings
-
-| Warning type | Events | Avg duration (frames) |
-|--------------|--------|----------------------|
-| FRONT OBJECT | 619 | 20.6 |
-| PEDESTRIAN RISK | 526 | 15.9 |
-| VEHICLE TOO CLOSE | 174 | 14.5 |
-| CYCLIST RISK | 11 | 3.7 |
-
-Warnings fired in 577 of 900 frames (64%). The high rate is expected at V1 and reflects
-the image-coordinate zone design without distance estimation — see Limitations.
-
-### V3 — KITTI Fine-Tuning
-
-Fine-tuned `yolo11s.pt` on KITTI object detection (7481 images, 80/20 split, 50 epochs, batch 16,
-imgsz 640) in Google Colab on a T4 GPU. Weights stored on Google Drive — not in this repo.
+Fine-tuned on 7481 KITTI images (80/20 split, 50 epochs, batch 16, imgsz 640) in Google Colab on a T4 GPU. Weights on Google Drive — not in this repo.
 
 | Metric | Value |
 |--------|-------|
@@ -183,70 +150,59 @@ imgsz 640) in Google Colab on a T4 GPU. Weights stored on Google Drive — not i
 | Best mAP@0.5:0.95 | **0.700** (epoch 50) |
 | Final precision | 0.924 |
 | Final recall | 0.855 |
-| Final val box loss | 0.684 |
 | Training time | 116 min (Colab T4) |
 
-The model converged smoothly over 50 epochs with no plateau; losses were still decreasing
-at epoch 50, suggesting additional epochs would yield marginal gains.
 Training curve: `outputs/figures/kitti_training_curve.png`.
 
-### V4 — Distance Estimation
+### V4 — Distance estimation on `test_video.mp4` (1280×720, 4967 frames, `yolo11s_kitti.pt`)
 
-Monocular heuristic distance estimation added to the ADAS demo pipeline using
-bounding-box height: `D = f_y × H_real / h_bbox_pixels`.
-
-| Parameter | Value |
-|-----------|-------|
-| Method | Heuristic (bounding-box height) |
-| Focal length `f_y` | 900 px (dashcam default) or KITTI P2 calib via `--calib` |
-| Distance range displayed | 2 – 80 m |
-| Video | 1280×720, 4967 frames, fine-tuned `yolo11s_kitti.pt` |
+| Metric | Value |
+|--------|-------|
 | Average FPS | 33.8 |
-| Warning events | 6087 across all frames |
+| Avg YOLO inference | 13.7 ms/frame |
+| Distance method | Heuristic (`f_y = 900 px`) |
 | Distance range observed | 2.6 – 55.4 m (mean 15.6 m) |
+| Total warning events | 6087 |
+| FRONT OBJECT | 3637 |
+| VEHICLE TOO CLOSE | 2329 |
+| PEDESTRIAN RISK | 116 |
+| CYCLIST RISK | 5 |
 
-Distance is displayed on each bounding box as `~Xm` and logged as `distance_m` in
-`warnings.csv`. The nearest detected vehicle per frame is shown in the HUD.
-Labeled *heuristic (approx)* throughout — not suitable for safety-critical decisions.
+### Tracker comparison (ByteTrack vs BoT-SORT)
 
-To use KITTI calibration instead of the default focal length:
-```powershell
-python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
-    --calib D:\kitti\training\calib\000042.txt
-```
+| Metric | ByteTrack | BoT-SORT |
+|--------|-----------|---------|
+| Unique track IDs (fewer = stable) | 126 | **115** |
+| Avg track length (frames) | 27.9 | **31.8** |
+| Median track length (frames) | 6 | **9** |
+| Tracks ≥ 10 frames | 51 | **53** |
+
+BoT-SORT shows better stability; ByteTrack is kept as default for speed and as the V3–V5 baseline.
 
 ## Limitations
 
-Three documented failure cases (per §10.4 / §17.1).
+Three documented failure cases measured on the V1 baseline video.
 
 **1. FRONT OBJECT fires almost continuously.**
-The trapezoidal front zone covers the full driving-lane width at the bottom of the frame,
-so any vehicle visible ahead triggers it regardless of real distance. 619 FRONT OBJECT events
-in 900 frames means the warning is effectively always active, making it meaningless as an
-alert. Fix: distance estimation (V4) or tighter zone narrowed to only the immediate path.
+The trapezoidal front zone covers the full lane width at the bottom of the frame, so any vehicle ahead triggers it regardless of distance. V4 now provides distance estimates; V5 TTC will allow gating warnings by approach velocity.
 
-**2. PEDESTRIAN RISK fires for distant pedestrians on the pavement.**
-The risk zone uses image coordinates only, with no depth cue. A pedestrian walking along the
-far pavement at 20 m distance enters the polygon and fires a warning identical to one at 3 m.
-526 events from 1918 person detections (27% trigger rate). Fix: scale zone boundaries by
-approximate depth, or apply a minimum bbox-size gate.
+**2. PEDESTRIAN RISK fires for distant pavement pedestrians.**
+The risk zone uses image coordinates only, with no depth cue. A pedestrian at 20 m triggers the same warning as one at 3 m. Fix: apply a minimum bbox-size gate or scale zone boundaries by distance estimate.
 
 **3. VEHICLE TOO CLOSE misclassifies large stationary vehicles.**
-The heuristic (`bbox_height ≥ 25% of frame height AND bottom_y ≥ 65% of frame height`)
-fires when a large bus or truck fills the frame even if it is not on a collision course.
-174 events despite only 68 bus detections in the clip. Fix: time-to-collision using tracked
-centroid velocity (V5), or add a minimum confidence and trajectory filter.
+The bbox-height heuristic fires when a large bus/truck fills the frame even when stationary. V4 provides explicit distance; V5 TTC (approach velocity) will distinguish stationary from approaching targets.
 
 ## Roadmap
 
-| Phase | Scope |
-|-------|-------|
-| V2 | Evaluation: mAP, confidence histograms, tracker comparison metrics |
-| V3 | KITTI fine-tuning in Colab |
-| V4 | Improved distance estimation from KITTI calibration or bbox heuristics |
-| V5 | Time-to-collision from tracked object velocity |
-| V6 | Lane/road-zone-aware risk boundaries |
-| V7 | Technical report PDF, slides, CV bullets, thesis proposal |
+| Phase | Status | Scope |
+|-------|--------|-------|
+| V1 (Phases 1–4) | Done | Detection + tracking + ADAS warnings + metrics |
+| V2 | Done | Evaluation: confidence histograms, tracker comparison, failure cases |
+| V3 | Done | KITTI fine-tuning in Colab |
+| V4 | Done | Monocular distance estimation (heuristic + calib) |
+| V5 | Upcoming | Time-to-collision from tracked centroid velocity history |
+| V6 | Upcoming | Lane/road-zone-aware risk boundaries |
+| V7 | Upcoming | Technical report, slides, CV bullets, thesis proposal |
 
 Full 12-week plan: `docs/ADAS_Perception_Risk_System_Project_Plan.pdf` §6.
 
