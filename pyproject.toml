@@ -4,5 +4,14 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = []
 
+# Optional tooling. Core pipeline deps are pinned in requirements.txt.
+# `docs` is only needed to regenerate the V7 publication package
+# (scripts/build_report.py, scripts/build_slides.py).
+[project.optional-dependencies]
+docs = [
+    "reportlab>=4.0",
+    "python-pptx>=1.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]

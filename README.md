@@ -15,7 +15,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → la
 | V4 — Distance estimation | Done | `~Xm` overlay on video, `distance_m` column in `warnings.csv` |
 | V5 — Time-to-collision | Done | `ttc_s` column in `warnings.csv`, red `TTC #id ~Xs` HUD/box alerts |
 | V6 — Lane/zone awareness | Done | YOLOPv2 drivable-area dynamic FRONT zone, lane-line overlay |
-| V7 — Publication package | Upcoming | Report, slides, CV bullets, thesis proposal |
+| V7 — Publication package | Done | [Technical report](docs/technical_report.pdf), [slides](docs/slides.pptx), [CV bullets](docs/cv_bullets.md), [thesis proposal](docs/thesis_proposal.md) |
 
 ## Architecture
 
@@ -260,9 +260,26 @@ The bbox-height heuristic fires when a large bus/truck fills the frame even when
 | V4 | Done | Monocular distance estimation (heuristic + calib) |
 | V5 | Done | Time-to-collision from per-track distance-history velocity (in-path gated) |
 | V6 | Done | YOLOPv2 drivable-area dynamic FRONT zone + lane-line overlay (static fallback) |
-| V7 | Upcoming | Technical report, slides, CV bullets, thesis proposal |
+| V7 | Done | Technical report, slide deck, CV bullets, thesis proposal |
 
-Full 12-week plan: `docs/ADAS_Perception_Risk_System_Project_Plan.pdf` §6.
+Full 12-week plan: `docs/ADAS_Perception_Risk_System_Project_Plan.pdf` §6. The roadmap is
+complete; further work is thesis-grade evaluation (`docs/thesis_proposal.md`).
+
+## Publication package (V7)
+
+Reproducible document generators (regenerate any time):
+
+```powershell
+python scripts/build_report.py    # -> docs/technical_report.pdf  (reportlab)
+python scripts/build_slides.py    # -> docs/slides.pptx           (python-pptx)
+```
+
+| Deliverable | File |
+|-------------|------|
+| Technical report (PDF, 6 pp.) | [docs/technical_report.pdf](docs/technical_report.pdf) |
+| Slide deck (8 slides) | [docs/slides.pptx](docs/slides.pptx) |
+| CV bullets | [docs/cv_bullets.md](docs/cv_bullets.md) |
+| Thesis proposal | [docs/thesis_proposal.md](docs/thesis_proposal.md) |
 
 ## References
 

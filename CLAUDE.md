@@ -8,7 +8,7 @@ Real-Time ADAS Perception and Risk Warning System: a computer-vision pipeline th
 
 The full plan is at `docs/ADAS_Perception_Risk_System_Project_Plan.pdf`. That PDF is the specification — consult it for detail (section numbers are referenced below). This file is the working contract for *how* to build it.
 
-Current state: V1–V6 are fully built and committed. The repo is clean and all audit issues from session 1 are resolved. The next phase is **V7 — Publication package**.
+Current state: V1–V7 are fully built and committed — the roadmap is complete. The repo is clean and all audit issues from session 1 are resolved. Further work is thesis-grade evaluation (see `docs/thesis_proposal.md`), not new pipeline phases.
 
 ## Completed phases (do not re-audit or re-implement)
 
@@ -21,6 +21,7 @@ Current state: V1–V6 are fully built and committed. The repo is clean and all 
 - **V4 (Distance estimation):** `src/adas_perception/risk/distance.py` — `D = f_y × H_real / h_bbox`. `configs/camera.yaml` holds default focal length and per-class heights. `--calib` flag accepts a KITTI P2 file. Distance shown on bboxes and in HUD; `distance_m` column added to `warnings.csv`.
 - **V5 (Time-to-collision):** `src/adas_perception/risk/ttc.py` — `TTCEstimator` keeps a per-track ring buffer of `(video_time, distance)` and fits closing speed by least squares; `TTC = distance / approach_speed`. `configs/ttc.yaml` holds the threshold and buffer params. TTC is a Priority-5 warning that *escalates* an existing in-path zone warning (gated by `require_in_path`, which suppresses the monocular false positive of roadside objects the ego passes). `ttc_s` column added to `warnings.csv`; shown on the bbox and as per-track HUD alerts.
 - **V6 (Lane/road-area awareness):** `src/adas_perception/risk/lane.py` — `LaneSegmenter` wraps the **YOLOPv2** TorchScript model (drivable-area + lane-line segmentation). The EMA-smoothed drivable area becomes the dynamic FRONT zone (largest contour → polygon), replacing the static trapezoid; falls back to the static zone when drivable coverage is low (intersections). `configs/lane.yaml` holds weights path, device, fp16, thresholds, smoothing, fallback. Weights `D:\kitti\weights\yolopv2.pt` (external HDD, gitignored). Flags: `--no-lane`, `--lane-weights`. Adds `lane_ms` to `frame_timings.csv`. Measured: 98% lane-detection rate, FRONT OBJECT false positives cut 67% (3637→1215), 34→15.6 FPS.
+- **V7 (Publication package):** Reproducible doc generators — `scripts/build_report.py` (reportlab) → `docs/technical_report.pdf` (6 pages, structure per PDF §15.3), `scripts/build_slides.py` (python-pptx) → `docs/slides.pptx` (8 slides per §15.4). Plus `docs/cv_bullets.md` and `docs/thesis_proposal.md`. Regenerate with `python scripts/build_report.py` / `build_slides.py`. Note: no PDF/PPTX renderer in this environment, so QA was content/geometry-based, not pixel-level.
 
 ## Environment and commands (Windows 11 / PowerShell)
 
@@ -50,8 +51,8 @@ Reusable logic lives in the package `src/adas_perception/` (submodules `detectio
 
 Each phase has explicit acceptance criteria in the PDF; meet them before moving on.
 
-- **Phase 1–4 and V2–V6:** Done. See "Completed phases" above.
-- **V7 — Publication package (§6, next):** Technical report PDF, slides, CV bullets, thesis proposal.
+- **Phase 1–4 and V2–V7:** Done. See "Completed phases" above. The roadmap is complete.
+- **Beyond the roadmap:** thesis-grade evaluation (ground-truth distance/TTC/in-path metrics on KITTI) per `docs/thesis_proposal.md`; optional ONNX/fp16 deployment study; optional ROS 2 / CARLA integration.
 
 ## Conventions
 
