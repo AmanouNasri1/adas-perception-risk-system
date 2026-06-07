@@ -1,6 +1,6 @@
 # Real-Time ADAS Perception and Risk Warning System
 
-Computer-vision pipeline: YOLO object detection → multi-object tracking → risk-zone analysis → distance estimation → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
+Computer-vision pipeline: YOLO object detection → multi-object tracking → risk-zone analysis → distance estimation → time-to-collision → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
 
 ## Overview
 
@@ -13,7 +13,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → ri
 | V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, tracker comparison, failure-case screenshots |
 | V3 — KITTI fine-tuning | Done | `outputs/reports/kitti_training_results.csv`, `outputs/figures/kitti_training_curve.png` |
 | V4 — Distance estimation | Done | `~Xm` overlay on video, `distance_m` column in `warnings.csv` |
-| V5 — Time-to-collision | Upcoming | TTC from tracked centroid velocity |
+| V5 — Time-to-collision | Done | `ttc_s` column in `warnings.csv`, red `TTC #id ~Xs` HUD/box alerts |
 | V6 — Lane/zone awareness | Upcoming | Road-area-aware risk boundaries |
 | V7 — Publication package | Upcoming | Report, slides, CV bullets, thesis proposal |
 
@@ -38,13 +38,13 @@ Risk-zone analyzer  (polygon intersection, ratio-scaled zones)
 Distance estimator  (D = f_y × H_real / h_bbox, heuristic or KITTI-calibrated)
     │
     ▼
-ADAS warning engine  (PEDESTRIAN RISK / CYCLIST RISK / VEHICLE TOO CLOSE / FRONT OBJECT)
+ADAS warning engine  (TTC WARNING / PEDESTRIAN RISK / CYCLIST RISK / VEHICLE TOO CLOSE / FRONT OBJECT)
     │
     ▼
-Annotator  (zone overlay + color-coded bboxes + distance labels + HUD)
+Annotator  (zone overlay + color-coded bboxes + distance/TTC labels + HUD)
     │
     ├──▶  outputs/demo/adas_demo_v1.mp4
-    ├──▶  outputs/logs/warnings.csv          (frame, track_id, class, warning, distance_m, bbox)
+    ├──▶  outputs/logs/warnings.csv          (frame, track_id, class, warning, distance_m, ttc_s, bbox)
     ├──▶  outputs/logs/tracking_results.csv
     ├──▶  outputs/logs/frame_timings.csv
     └──▶  outputs/reports/  +  outputs/figures/
@@ -88,7 +88,7 @@ python scripts/run_tracking.py --source data/samples/test_video.mp4 --tracker bo
 ```
 Output: tracked video + `outputs/logs/tracking_results.csv`.
 
-### ADAS demo with distance estimation (Phase 3 / V4)
+### ADAS demo with distance + time-to-collision (Phase 3 / V4 / V5)
 ```powershell
 # Heuristic distance (default focal length from configs/camera.yaml):
 python scripts/run_adas_demo.py --source data/samples/test_video.mp4
@@ -97,7 +97,8 @@ python scripts/run_adas_demo.py --source data/samples/test_video.mp4
 python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
     --calib D:\kitti\training\calib\000042.txt
 ```
-Output: `outputs/demo/adas_demo_v1.mp4`, `outputs/logs/warnings.csv` (with `distance_m`),
+TTC parameters (buffer size, threshold, in-path gating) live in `configs/ttc.yaml`.
+Output: `outputs/demo/adas_demo_v1.mp4`, `outputs/logs/warnings.csv` (with `distance_m` and `ttc_s`),
 `outputs/logs/tracking_results.csv`, `outputs/logs/frame_timings.csv`.
 
 ### Metrics (Phase 4)
@@ -168,6 +169,26 @@ Training curve: `outputs/figures/kitti_training_curve.png`.
 | PEDESTRIAN RISK | 116 |
 | CYCLIST RISK | 5 |
 
+### V5 — Time-to-collision on `test_video.mp4` (same clip, `yolo11s_kitti.pt`)
+
+`TTC = distance / approach_speed`, where approach speed is the least-squares slope of each
+track's distance history (10-frame ring buffer over *video* time). A Priority-5 `TTC WARNING`
+fires when `TTC < 3 s` (configurable in `configs/ttc.yaml`).
+
+| Metric | Value |
+|--------|-------|
+| Average FPS | 34.1 (TTC adds negligible cost) |
+| TTC warning rows (in-path gated) | 1559 |
+| TTC warning rows (ungated, for comparison) | 6181 |
+| Out-of-path false positives removed by gating | 4622 (75%) |
+
+**Design note — the in-path gate.** Naive monocular TTC fires on *every* tracked object whose
+bounding box grows, including parked/roadside cars the ego simply drives past (their distance
+shrinks, but there is no collision course). On this clip that was 75% of all TTC triggers. The
+`require_in_path` gate only escalates objects that already raise a zone warning (FRONT OBJECT /
+VEHICLE TOO CLOSE / PEDESTRIAN / CYCLIST RISK), which removes the false positives while keeping
+the genuine closing-vehicle alerts.
+
 ### Tracker comparison (ByteTrack vs BoT-SORT)
 
 | Metric | ByteTrack | BoT-SORT |
@@ -184,13 +205,13 @@ BoT-SORT shows better stability; ByteTrack is kept as default for speed and as t
 Three documented failure cases measured on the V1 baseline video.
 
 **1. FRONT OBJECT fires almost continuously.**
-The trapezoidal front zone covers the full lane width at the bottom of the frame, so any vehicle ahead triggers it regardless of distance. V4 now provides distance estimates; V5 TTC will allow gating warnings by approach velocity.
+The trapezoidal front zone covers the full lane width at the bottom of the frame, so any vehicle ahead triggers it regardless of distance. V4 added distance estimates and V5 layers TTC on top, so the highest-priority alert now reflects approach velocity rather than mere presence in the zone.
 
 **2. PEDESTRIAN RISK fires for distant pavement pedestrians.**
 The risk zone uses image coordinates only, with no depth cue. A pedestrian at 20 m triggers the same warning as one at 3 m. Fix: apply a minimum bbox-size gate or scale zone boundaries by distance estimate.
 
 **3. VEHICLE TOO CLOSE misclassifies large stationary vehicles.**
-The bbox-height heuristic fires when a large bus/truck fills the frame even when stationary. V4 provides explicit distance; V5 TTC (approach velocity) will distinguish stationary from approaching targets.
+The bbox-height heuristic fires when a large bus/truck fills the frame even when stationary. V4 provides explicit distance; V5 TTC (approach velocity) distinguishes stationary from approaching targets — a stationary vehicle has near-zero closing speed and so raises no TTC warning.
 
 ## Roadmap
 
@@ -200,7 +221,7 @@ The bbox-height heuristic fires when a large bus/truck fills the frame even when
 | V2 | Done | Evaluation: confidence histograms, tracker comparison, failure cases |
 | V3 | Done | KITTI fine-tuning in Colab |
 | V4 | Done | Monocular distance estimation (heuristic + calib) |
-| V5 | Upcoming | Time-to-collision from tracked centroid velocity history |
+| V5 | Done | Time-to-collision from per-track distance-history velocity (in-path gated) |
 | V6 | Upcoming | Lane/road-zone-aware risk boundaries |
 | V7 | Upcoming | Technical report, slides, CV bullets, thesis proposal |
 

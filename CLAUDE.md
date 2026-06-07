@@ -8,7 +8,7 @@ Real-Time ADAS Perception and Risk Warning System: a computer-vision pipeline th
 
 The full plan is at `docs/ADAS_Perception_Risk_System_Project_Plan.pdf`. That PDF is the specification — consult it for detail (section numbers are referenced below). This file is the working contract for *how* to build it.
 
-Current state: V1–V4 are fully built and committed. The repo is clean and all audit issues from session 1 are resolved. The next phase is **V5 — Time-to-collision**.
+Current state: V1–V5 are fully built and committed. The repo is clean and all audit issues from session 1 are resolved. The next phase is **V6 — Lane/road-zone awareness**.
 
 ## Completed phases (do not re-audit or re-implement)
 
@@ -19,6 +19,7 @@ Current state: V1–V4 are fully built and committed. The repo is clean and all 
 - **V2 (Evaluation):** `scripts/run_evaluation.py` — confidence histogram, tracker comparison, failure-case screenshots.
 - **V3 (KITTI fine-tuning):** Completed in Google Colab. `scripts/kitti_to_yolo.py` converts labels. `configs/kitti.yaml` is the Colab dataset config. Fine-tuned weights at `D:\kitti\weights\yolo11s_kitti.pt` (external HDD, gitignored). Best mAP@0.5 = 0.922 after 50 epochs.
 - **V4 (Distance estimation):** `src/adas_perception/risk/distance.py` — `D = f_y × H_real / h_bbox`. `configs/camera.yaml` holds default focal length and per-class heights. `--calib` flag accepts a KITTI P2 file. Distance shown on bboxes and in HUD; `distance_m` column added to `warnings.csv`.
+- **V5 (Time-to-collision):** `src/adas_perception/risk/ttc.py` — `TTCEstimator` keeps a per-track ring buffer of `(video_time, distance)` and fits closing speed by least squares; `TTC = distance / approach_speed`. `configs/ttc.yaml` holds the threshold and buffer params. TTC is a Priority-5 warning that *escalates* an existing in-path zone warning (gated by `require_in_path`, which suppresses the monocular false positive of roadside objects the ego passes). `ttc_s` column added to `warnings.csv`; shown on the bbox and as per-track HUD alerts.
 
 ## Environment and commands (Windows 11 / PowerShell)
 
@@ -48,9 +49,8 @@ Reusable logic lives in the package `src/adas_perception/` (submodules `detectio
 
 Each phase has explicit acceptance criteria in the PDF; meet them before moving on.
 
-- **Phase 1–4 and V2–V4:** Done. See "Completed phases" above.
-- **V5 — Time-to-collision (next):** Estimate TTC from the velocity of each tracked object's centroid across frames. `TTC = distance / approach_speed`. Requires a distance history buffer per track_id (use the `distance_m` values already logged in `warnings.csv`). Add `ttc_s` column to `warnings.csv`. Fire a TTC warning (e.g. `TTC < 3s`) as a new high-priority warning tier. Implement in `src/adas_perception/risk/ttc.py`, surface in `run_adas_demo.py`.
-- **V6 — Lane/road-zone awareness (§6):** Improve risk zones using road-area approximation.
+- **Phase 1–4 and V2–V5:** Done. See "Completed phases" above.
+- **V6 — Lane/road-zone awareness (§6, next):** Improve risk zones using road-area approximation.
 - **V7 — Publication package (§6):** Technical report PDF, slides, CV bullets, thesis proposal.
 
 ## Conventions

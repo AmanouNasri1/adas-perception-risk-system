@@ -2,11 +2,17 @@ from __future__ import annotations
 
 # Warning priority — higher number = higher severity.
 PRIORITY: dict[str, int] = {
+    "TTC WARNING":     5,   # imminent collision (V5) — overrides all others
     "PEDESTRIAN RISK": 4,
     "CYCLIST RISK":    4,
     "VEHICLE TOO CLOSE": 3,
     "FRONT OBJECT":    1,
 }
+
+# Constant warning_type logged for a sub-threshold time-to-collision (V5).
+# The numeric seconds live in the separate ttc_s column / HUD, not in this string,
+# so PRIORITY and box-colour lookups stay exact.
+TTC_WARNING = "TTC WARNING"
 
 VEHICLE_CLASSES: frozenset[str] = frozenset({"car", "truck", "bus", "motorcycle"})
 

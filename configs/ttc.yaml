@@ -1,0 +1,31 @@
+# Time-to-collision (TTC) estimation (V5).
+#
+# TTC = distance / approach_speed, where approach_speed = -d(distance)/dt is how fast
+# an object's monocular distance (V4) is shrinking. A short ring buffer of
+# (time, distance) samples per track_id feeds a least-squares fit of the closing speed.
+#
+# TTC inherits the approximation of the V4 distance model and is labelled accordingly;
+# not suitable for safety-critical decisions.
+
+# Number of recent (time, distance) samples kept per track for the speed fit.
+history_size: 10
+
+# Minimum samples required before any TTC is emitted (suppresses noisy early estimates).
+min_samples: 5
+
+# Fire a TTC WARNING (Priority 5, highest) when estimated TTC is below this (seconds).
+warn_threshold_s: 3.0
+
+# Ignore approach speeds below this (m/s): treats near-stationary / receding objects as
+# non-threatening and avoids divide-by-near-zero TTC blow-ups.
+min_approach_speed_mps: 0.5
+
+# Clamp reported TTC to this ceiling (seconds) for display and logging sanity.
+max_ttc_s: 60.0
+
+# Only raise a TTC WARNING for objects already flagged by a zone warning
+# (FRONT OBJECT / VEHICLE TOO CLOSE / PEDESTRIAN / CYCLIST RISK) — i.e. objects in the
+# ego's path. This suppresses the classic monocular false positive: roadside / parked
+# objects the ego drives past, whose bbox-distance shrinks with no real collision course.
+# Set false to score TTC on every tracked object (noisier; for analysis only).
+require_in_path: true

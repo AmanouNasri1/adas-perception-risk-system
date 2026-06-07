@@ -7,6 +7,7 @@ _PED_CYC_COLOR = (0,  40, 220)   # red
 _ZONE_ALPHA    = 0.28
 
 _BOX_COLORS = {
+    "TTC WARNING":       (0,   0, 255),   # pure red — highest severity (V5)
     "PEDESTRIAN RISK":   (0,  40, 220),   # red
     "CYCLIST RISK":      (0,  40, 220),
     "VEHICLE TOO CLOSE": (0, 120, 255),   # amber
@@ -35,6 +36,7 @@ def draw_box(
     class_name: str,
     warning: str | None,
     distance_m: float | None = None,
+    ttc_s: float | None = None,
 ) -> None:
     x1, y1, x2, y2 = [int(v) for v in box]
     color = _BOX_COLORS.get(warning, _BOX_COLORS[None])
@@ -43,7 +45,9 @@ def draw_box(
     label = f"#{track_id} {class_name}"
     if distance_m is not None:
         label += f" ~{distance_m:.0f}m"
-    if warning:
+    if warning == "TTC WARNING" and ttc_s is not None:
+        label += f" | TTC ~{ttc_s:.1f}s"
+    elif warning:
         label += f" | {warning}"
 
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -67,6 +71,7 @@ def draw_hud(
     fps: float | None,
     active_warnings: list[str],
     nearest_m: float | None = None,
+    ttc_alerts: list[tuple[int, float]] | None = None,
 ) -> None:
     lines: list[tuple[str, tuple]] = []
     lines.append((f"Frame {frame_idx}", (220, 220, 220)))
@@ -74,6 +79,9 @@ def draw_hud(
         lines.append((f"FPS  {fps:.1f}", (220, 220, 220)))
     if nearest_m is not None:
         lines.append((f"Nearest ~{nearest_m:.0f} m (approx)", (50, 210, 255)))
+    # Per-track imminent-collision alerts (V5), sorted soonest-first, in bright red.
+    for tid, ttc_s in sorted(ttc_alerts or [], key=lambda a: a[1]):
+        lines.append((f"TTC #{tid} ~{ttc_s:.1f}s", (0, 0, 255)))
     for w in active_warnings:
         lines.append((f"!! {w}", (60, 60, 255)))
 
