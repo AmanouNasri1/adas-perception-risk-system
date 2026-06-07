@@ -16,17 +16,48 @@ _BOX_COLORS = {
 }
 
 
+_LANE_LINE_COLOR = (0, 0, 255)   # red — YOLOPv2 lane lines
+_DRIVABLE_COLOR  = (0, 180, 0)   # green — YOLOPv2 drivable area
+
+
+def _fill_poly(frame: np.ndarray, poly: list, color: tuple, alpha: float = _ZONE_ALPHA) -> None:
+    pts = np.array(poly, np.int32)
+    overlay = frame.copy()
+    cv2.fillPoly(overlay, [pts], color)
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    cv2.polylines(frame, [pts], True, color, 2)
+
+
+def draw_pedcyc_zone(frame: np.ndarray, ped_cyc_poly: list) -> None:
+    _fill_poly(frame, ped_cyc_poly, _PED_CYC_COLOR)
+
+
 def draw_zones(
     frame: np.ndarray,
     front_poly: list,
     ped_cyc_poly: list,
 ) -> None:
-    overlay = frame.copy()
-    cv2.fillPoly(overlay, [np.array(ped_cyc_poly, np.int32)], _PED_CYC_COLOR)
-    cv2.fillPoly(overlay, [np.array(front_poly,   np.int32)], _FRONT_COLOR)
-    cv2.addWeighted(overlay, _ZONE_ALPHA, frame, 1 - _ZONE_ALPHA, 0, frame)
-    cv2.polylines(frame, [np.array(ped_cyc_poly, np.int32)], True, _PED_CYC_COLOR, 2)
-    cv2.polylines(frame, [np.array(front_poly,   np.int32)], True, _FRONT_COLOR,   2)
+    _fill_poly(frame, ped_cyc_poly, _PED_CYC_COLOR)
+    _fill_poly(frame, front_poly,   _FRONT_COLOR)
+
+
+def draw_lane_overlay(
+    frame: np.ndarray,
+    drivable_mask: np.ndarray,
+    lane_mask: np.ndarray,
+    polygon: list | None = None,
+    draw_drivable: bool = True,
+    draw_lane_lines: bool = True,
+) -> None:
+    """Draw the YOLOPv2 drivable-area fill, lane-line pixels, and dynamic zone outline (V6)."""
+    if draw_drivable and drivable_mask is not None:
+        overlay = frame.copy()
+        overlay[drivable_mask > 0] = _DRIVABLE_COLOR
+        cv2.addWeighted(overlay, _ZONE_ALPHA, frame, 1 - _ZONE_ALPHA, 0, frame)
+    if draw_lane_lines and lane_mask is not None:
+        frame[lane_mask > 0] = _LANE_LINE_COLOR
+    if polygon is not None and len(polygon) >= 3:
+        cv2.polylines(frame, [np.array(polygon, np.int32)], True, _FRONT_COLOR, 2)
 
 
 def draw_box(

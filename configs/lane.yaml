@@ -1,0 +1,41 @@
+# Lane / road-area awareness (V6) via the YOLOPv2 panoptic driving-perception model.
+#
+# The drivable-area segmentation replaces the static front trapezoid as the FRONT zone:
+# an object counts as a FRONT OBJECT when its bottom-centre falls inside the ego's
+# drivable region rather than inside a fixed polygon. When segmentation confidence is
+# low (e.g. at intersections where there is no clear ego lane) the system falls back to
+# the static front zone in configs/risk_zones.yaml. Lane-line segmentation is drawn for
+# context. Outputs are approximate and not safety-critical.
+#
+# Weights: YOLOPv2 TorchScript file. Not in the repo — external HDD, like the KITTI model.
+
+enabled: true
+
+# YOLOPv2 TorchScript weights. Override with --lane-weights. See data/README.md.
+weights: D:\kitti\weights\yolopv2.pt
+
+# Inference device: cuda or cpu. Falls back to cpu automatically if cuda is unavailable.
+device: cuda
+# Half precision (fp16) on GPU: ~1.5x faster, negligible segmentation-quality loss.
+half: true
+
+# Model input size (letterboxed). 384x640 == a 1280x720 frame scaled to width 640.
+input_height: 384
+input_width: 640
+
+# Drivable-area threshold. The model emits already-softmaxed probabilities in [0, 1].
+drivable_threshold: 0.5
+# Lane-line threshold. The lane head emits an already-activated map in [0, 1].
+lane_threshold: 0.5
+
+# Temporal smoothing: EMA on the drivable probability map across frames.
+# Higher = snappier and more responsive; lower = smoother and more stable.
+ema_alpha: 0.4
+
+# Fallback control. "Confidence" = drivable fraction within a lower band of the frame.
+roi_bottom_fraction: 0.5     # measure coverage over the lower 50% of the frame
+min_drivable_coverage: 0.05  # below this fraction, fall back to the static front zone
+
+# Drawing
+draw_drivable: true
+draw_lane_lines: true

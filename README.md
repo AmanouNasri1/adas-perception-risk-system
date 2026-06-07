@@ -1,6 +1,6 @@
 # Real-Time ADAS Perception and Risk Warning System
 
-Computer-vision pipeline: YOLO object detection → multi-object tracking → risk-zone analysis → distance estimation → time-to-collision → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
+Computer-vision pipeline: YOLO object detection → multi-object tracking → lane/road-area segmentation → risk-zone analysis → distance estimation → time-to-collision → ADAS warnings on driving video, producing an annotated demo video, frame-level CSV logs, and runtime metrics.
 
 ## Overview
 
@@ -14,7 +14,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → ri
 | V3 — KITTI fine-tuning | Done | `outputs/reports/kitti_training_results.csv`, `outputs/figures/kitti_training_curve.png` |
 | V4 — Distance estimation | Done | `~Xm` overlay on video, `distance_m` column in `warnings.csv` |
 | V5 — Time-to-collision | Done | `ttc_s` column in `warnings.csv`, red `TTC #id ~Xs` HUD/box alerts |
-| V6 — Lane/zone awareness | Upcoming | Road-area-aware risk boundaries |
+| V6 — Lane/zone awareness | Done | YOLOPv2 drivable-area dynamic FRONT zone, lane-line overlay |
 | V7 — Publication package | Upcoming | Report, slides, CV bullets, thesis proposal |
 
 ## Architecture
@@ -32,7 +32,10 @@ YOLO detector  (yolo11s_kitti.pt fine-tuned, or yolo11s.pt pretrained)
 ByteTrack tracker  (persistent IDs across frames)
     │
     ▼
-Risk-zone analyzer  (polygon intersection, ratio-scaled zones)
+Lane/road-area segmentation  (YOLOPv2 drivable area → dynamic FRONT zone; static fallback)
+    │
+    ▼
+Risk-zone analyzer  (point-in-polygon; dynamic drivable zone + static ped/cyclist zone)
     │
     ▼
 Distance estimator  (D = f_y × H_real / h_bbox, heuristic or KITTI-calibrated)
@@ -46,7 +49,7 @@ Annotator  (zone overlay + color-coded bboxes + distance/TTC labels + HUD)
     ├──▶  outputs/demo/adas_demo_v1.mp4
     ├──▶  outputs/logs/warnings.csv          (frame, track_id, class, warning, distance_m, ttc_s, bbox)
     ├──▶  outputs/logs/tracking_results.csv
-    ├──▶  outputs/logs/frame_timings.csv
+    ├──▶  outputs/logs/frame_timings.csv     (incl. lane_ms segmentation cost)
     └──▶  outputs/reports/  +  outputs/figures/
 ```
 
@@ -88,18 +91,28 @@ python scripts/run_tracking.py --source data/samples/test_video.mp4 --tracker bo
 ```
 Output: tracked video + `outputs/logs/tracking_results.csv`.
 
-### ADAS demo with distance + time-to-collision (Phase 3 / V4 / V5)
+### ADAS demo with distance + TTC + lane awareness (Phase 3 / V4 / V5 / V6)
 ```powershell
-# Heuristic distance (default focal length from configs/camera.yaml):
+# Full pipeline (lane/road-area awareness on by default, per configs/lane.yaml):
 python scripts/run_adas_demo.py --source data/samples/test_video.mp4
 
 # Calibration-based distance (KITTI P2 matrix):
 python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
     --calib D:\kitti\training\calib\000042.txt
+
+# Disable lane awareness (use the static front trapezoid only):
+python scripts/run_adas_demo.py --source data/samples/test_video.mp4 --no-lane
+
+# Point at a YOLOPv2 weights file elsewhere:
+python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
+    --lane-weights D:\models\yolopv2.pt
 ```
-TTC parameters (buffer size, threshold, in-path gating) live in `configs/ttc.yaml`.
+TTC parameters live in `configs/ttc.yaml`; lane/road-area parameters (weights, fp16,
+thresholds, smoothing, fallback) live in `configs/lane.yaml`. V6 needs the YOLOPv2
+weights (see [data/README.md](data/README.md)); without them the demo falls back to the
+static front zone automatically.
 Output: `outputs/demo/adas_demo_v1.mp4`, `outputs/logs/warnings.csv` (with `distance_m` and `ttc_s`),
-`outputs/logs/tracking_results.csv`, `outputs/logs/frame_timings.csv`.
+`outputs/logs/tracking_results.csv`, `outputs/logs/frame_timings.csv` (with `lane_ms`).
 
 ### Metrics (Phase 4)
 ```powershell
@@ -189,6 +202,30 @@ shrinks, but there is no collision course). On this clip that was 75% of all TTC
 VEHICLE TOO CLOSE / PEDESTRIAN / CYCLIST RISK), which removes the false positives while keeping
 the genuine closing-vehicle alerts.
 
+### V6 — Lane/road-area awareness on `test_video.mp4` (same clip)
+
+The static front trapezoid is replaced by the **drivable area** segmented per-frame by
+[YOLOPv2](https://github.com/CAIC-AD/YOLOPv2) (EMA-smoothed, largest contour → dynamic FRONT
+zone). When drivable coverage in the lower frame is too low to trust (e.g. intersections), the
+system falls back to the static zone. An object is a FRONT OBJECT only when its bottom-centre
+lies inside the ego's actual drivable lane.
+
+| Metric | Static front zone | V6 lane zone |
+|--------|-------------------|--------------|
+| Average FPS | 34.0 | 15.6 |
+| Avg lane-seg cost | — | 24.9 ms/frame (fp16, RTX 3050) |
+| Lane-detection rate (else static fallback) | — | 4869/4967 (98.0%) |
+| **FRONT OBJECT warnings** | **3637** | **1215 (−67%)** |
+| TTC warnings | 1559 | 1446 |
+| VEHICLE TOO CLOSE / PEDESTRIAN / CYCLIST | 2329 / 116 / 5 | 2329 / 116 / 5 (unchanged) |
+
+**Why FRONT OBJECT drops by two-thirds.** The fixed trapezoid spans the full lane width at the
+bottom of the frame, so it flags vehicles in adjacent lanes and at the roadside. Restricting the
+FRONT zone to the segmented ego-drivable area removes those out-of-lane false positives while
+leaving the depth-based (VEHICLE TOO CLOSE) and pedestrian/cyclist warnings — which do not use the
+front zone — untouched. The cost is roughly 2× compute (one extra deep model per frame), reported
+honestly above. See `outputs/figures/v6_static_vs_lane_4200.png` for a side-by-side.
+
 ### Tracker comparison (ByteTrack vs BoT-SORT)
 
 | Metric | ByteTrack | BoT-SORT |
@@ -198,14 +235,14 @@ the genuine closing-vehicle alerts.
 | Median track length (frames) | 6 | **9** |
 | Tracks ≥ 10 frames | 51 | **53** |
 
-BoT-SORT shows better stability; ByteTrack is kept as default for speed and as the V3–V5 baseline.
+BoT-SORT shows better stability; ByteTrack is kept as default for speed and as the V3–V6 baseline.
 
 ## Limitations
 
-Three documented failure cases measured on the V1 baseline video.
+Failure cases measured on the V1 baseline video, with how later phases address them.
 
-**1. FRONT OBJECT fires almost continuously.**
-The trapezoidal front zone covers the full lane width at the bottom of the frame, so any vehicle ahead triggers it regardless of distance. V4 added distance estimates and V5 layers TTC on top, so the highest-priority alert now reflects approach velocity rather than mere presence in the zone.
+**1. FRONT OBJECT fired almost continuously (V1) — largely addressed in V6.**
+The static trapezoid covered the full lane width, so any vehicle ahead (including adjacent lanes and the roadside) triggered it. V6 replaces it with the YOLOPv2 ego-drivable area, cutting FRONT OBJECT warnings by 67%. Residual cases remain at intersections, where there is no clear ego lane and the system falls back to the static zone (see `outputs/figures/v6_fallback_intersection.png`).
 
 **2. PEDESTRIAN RISK fires for distant pavement pedestrians.**
 The risk zone uses image coordinates only, with no depth cue. A pedestrian at 20 m triggers the same warning as one at 3 m. Fix: apply a minimum bbox-size gate or scale zone boundaries by distance estimate.
@@ -222,7 +259,7 @@ The bbox-height heuristic fires when a large bus/truck fills the frame even when
 | V3 | Done | KITTI fine-tuning in Colab |
 | V4 | Done | Monocular distance estimation (heuristic + calib) |
 | V5 | Done | Time-to-collision from per-track distance-history velocity (in-path gated) |
-| V6 | Upcoming | Lane/road-zone-aware risk boundaries |
+| V6 | Done | YOLOPv2 drivable-area dynamic FRONT zone + lane-line overlay (static fallback) |
 | V7 | Upcoming | Technical report, slides, CV bullets, thesis proposal |
 
 Full 12-week plan: `docs/ADAS_Perception_Risk_System_Project_Plan.pdf` §6.
@@ -233,3 +270,4 @@ Full 12-week plan: `docs/ADAS_Perception_Risk_System_Project_Plan.pdf` §6.
 - [KITTI Vision Benchmark Suite](https://www.cvlibs.net/datasets/kitti/)
 - [PyTorch — Get Started Locally](https://pytorch.org/get-started/locally/)
 - Zhang et al., *ByteTrack: Multi-Object Tracking by Associating Every Detection Box*, ECCV 2022.
+- [YOLOPv2](https://github.com/CAIC-AD/YOLOPv2) — Han et al., *YOLOPv2: Better, Faster, Stronger for Panoptic Driving Perception*, 2022.

@@ -13,7 +13,10 @@ from adas_perception.risk.warning_engine import (
 )
 from adas_perception.risk.distance import parse_kitti_calib, estimate_distance
 from adas_perception.risk.ttc import TTCEstimator
-from adas_perception.visualization.annotator import draw_zones, draw_box, draw_hud
+from adas_perception.risk.lane import LaneSegmenter
+from adas_perception.visualization.annotator import (
+    draw_zones, draw_pedcyc_zone, draw_lane_overlay, draw_box, draw_hud,
+)
 
 
 def parse_args():
@@ -24,6 +27,11 @@ def parse_args():
     p.add_argument("--zone-config",    default="configs/risk_zones.yaml")
     p.add_argument("--camera-config",  default="configs/camera.yaml")
     p.add_argument("--ttc-config",     default="configs/ttc.yaml")
+    p.add_argument("--lane-config",    default="configs/lane.yaml")
+    p.add_argument("--lane-weights",   default=None,
+                   help="YOLOPv2 TorchScript weights (overrides lane.yaml)")
+    p.add_argument("--no-lane",        action="store_true",
+                   help="Disable V6 lane/road-area awareness; use the static front zone")
     p.add_argument("--calib",          default=None,
                    help="KITTI calib .txt for calibration-based f_y (optional)")
     p.add_argument("--model",          default=None)
@@ -44,6 +52,7 @@ def main():
     zone_cfg = load_config(args.zone_config)
     cam_cfg  = load_config(args.camera_config)
     ttc_cfg  = load_config(args.ttc_config)
+    lane_cfg = load_config(args.lane_config)
 
     model_name  = args.model or det_cfg["model"]
     conf        = args.conf  if args.conf  is not None else det_cfg["conf"]
@@ -73,6 +82,33 @@ def main():
     )
     ttc_threshold = ttc_cfg["warn_threshold_s"]
     ttc_in_path_only = ttc_cfg.get("require_in_path", True)
+
+    # Lane / road-area awareness setup (V6). On any failure (missing weights, no GPU
+    # support, load error) we log it and fall back to the static front zone for the run.
+    lane_segmenter = None
+    lane_enabled = lane_cfg.get("enabled", False) and not args.no_lane
+    if lane_enabled:
+        try:
+            lane_segmenter = LaneSegmenter(
+                weights=args.lane_weights or lane_cfg["weights"],
+                device=lane_cfg.get("device", "cuda"),
+                half=lane_cfg.get("half", True),
+                input_height=lane_cfg.get("input_height", 384),
+                input_width=lane_cfg.get("input_width", 640),
+                drivable_threshold=lane_cfg.get("drivable_threshold", 0.5),
+                lane_threshold=lane_cfg.get("lane_threshold", 0.5),
+                ema_alpha=lane_cfg.get("ema_alpha", 0.4),
+                roi_bottom_fraction=lane_cfg.get("roi_bottom_fraction", 0.5),
+                min_drivable_coverage=lane_cfg.get("min_drivable_coverage", 0.05),
+            )
+            lane_mode = f"YOLOPv2 ({lane_segmenter.device}, {'fp16' if lane_segmenter.half else 'fp32'})"
+        except Exception as e:
+            print(f"[lane] disabled — {type(e).__name__}: {e}")
+            lane_mode = "static front zone (lane init failed)"
+    else:
+        lane_mode = "static front zone" + (" (--no-lane)" if args.no_lane else "")
+    draw_drivable  = lane_cfg.get("draw_drivable", True)
+    draw_lanelines = lane_cfg.get("draw_lane_lines", True)
 
     cap = cv2.VideoCapture(args.source)
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -116,9 +152,11 @@ def main():
     frame_idx     = 0
     warning_rows  = 0
     ttc_warn_rows = 0
+    lane_ok_frames = 0
 
     print(f"Distance mode : {dist_mode}")
     print(f"TTC threshold : {ttc_threshold:.1f}s")
+    print(f"Lane mode     : {lane_mode}")
     print(f"Source        : {args.source}  ({frame_w}x{frame_h} @ {src_fps:.0f} fps)")
 
     with (
@@ -157,7 +195,26 @@ def main():
 
             bicycle_boxes = [b[4] for b in boxes_this_frame if b[2] == "bicycle"]
 
-            draw_zones(frame, front_poly, ped_cyc_poly)
+            # Lane / road-area awareness (V6): the drivable area is the dynamic FRONT
+            # zone; fall back to the static trapezoid when segmentation is low-confidence.
+            lane_ms = 0.0
+            front_poly_active = front_poly
+            if lane_segmenter is not None:
+                t_lane = time.perf_counter()
+                lane_res = lane_segmenter.process(frame)
+                lane_ms = (time.perf_counter() - t_lane) * 1000
+                if lane_res.ok:
+                    lane_ok_frames += 1
+                    front_poly_active = lane_res.polygon
+                    draw_lane_overlay(frame, lane_res.drivable_mask, lane_res.lane_mask,
+                                      polygon=lane_res.polygon,
+                                      draw_drivable=draw_drivable,
+                                      draw_lane_lines=draw_lanelines)
+                    draw_pedcyc_zone(frame, ped_cyc_poly)
+                else:
+                    draw_zones(frame, front_poly, ped_cyc_poly)
+            else:
+                draw_zones(frame, front_poly, ped_cyc_poly)
 
             active_warnings: list[str] = []
             ttc_alerts: list[tuple[int, float]] = []
@@ -173,7 +230,7 @@ def main():
                 ttc_s = ttc_estimator.update(tid, dist_m, video_t)
 
                 warns = get_warnings(cls_nm, coords, frame_h,
-                                     front_poly, ped_cyc_poly, close_cfg)
+                                     front_poly_active, ped_cyc_poly, close_cfg)
 
                 if "PEDESTRIAN RISK" in warns and cls_nm == "person":
                     if any(compute_iou(coords, bb) > BICYCLE_PERSON_OVERLAP_IOU
@@ -211,15 +268,18 @@ def main():
                      nearest_m=nearest_m, ttc_alerts=ttc_alerts)
             vwriter.write(frame)
 
-            annotation_ms = (time.perf_counter() - t_frame) * 1000
+            # annotation_ms here includes lane segmentation time; split it out so the
+            # timings CSV reports lane cost separately while total_ms stays the wall clock.
+            annotation_ms = (time.perf_counter() - t_frame) * 1000 - lane_ms
             total_ms = (speed.get("preprocess", 0.0) + speed.get("inference", 0.0)
-                        + speed.get("postprocess", 0.0) + annotation_ms)
+                        + speed.get("postprocess", 0.0) + annotation_ms + lane_ms)
             fps_buf.append(1000.0 / total_ms if total_ms > 0 else 0.0)
             frame_timings.append({
                 "frame":          frame_idx,
                 "preprocess_ms":  round(speed.get("preprocess",  0.0), 2),
                 "inference_ms":   round(speed.get("inference",   0.0), 2),
                 "postprocess_ms": round(speed.get("postprocess", 0.0), 2),
+                "lane_ms":        round(lane_ms, 2),
                 "annotation_ms":  round(annotation_ms, 2),
                 "total_ms":       round(total_ms, 2),
             })
@@ -230,7 +290,7 @@ def main():
     with out_timings.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=[
             "frame", "preprocess_ms", "inference_ms",
-            "postprocess_ms", "annotation_ms", "total_ms",
+            "postprocess_ms", "lane_ms", "annotation_ms", "total_ms",
         ])
         w.writeheader()
         w.writerows(frame_timings)
@@ -238,6 +298,7 @@ def main():
     total_ms_sum = sum(t["total_ms"] for t in frame_timings)
     avg_fps = 1000 * frame_idx / total_ms_sum if total_ms_sum > 0 else 0.0
     avg_inf = sum(t["inference_ms"] for t in frame_timings) / frame_idx if frame_idx else 0.0
+    avg_lane = sum(t["lane_ms"] for t in frame_timings) / frame_idx if frame_idx else 0.0
 
     print(f"\nADAS demo complete")
     print(f"  Frames processed     : {frame_idx}")
@@ -246,6 +307,11 @@ def main():
     print(f"  Warning rows         : {warning_rows}")
     print(f"  TTC warning rows     : {ttc_warn_rows}")
     print(f"  Distance mode        : {dist_mode}")
+    print(f"  Lane mode            : {lane_mode}")
+    if lane_segmenter is not None:
+        rate = 100.0 * lane_ok_frames / frame_idx if frame_idx else 0.0
+        print(f"  Lane detection rate  : {lane_ok_frames}/{frame_idx} ({rate:.1f}%)")
+        print(f"  Avg lane seg (ms)    : {avg_lane:.1f}")
     print(f"  Demo video           : {out_video}")
     print(f"  Warnings CSV         : {out_warnings}")
     print(f"  Tracking CSV         : {out_tracking}")
