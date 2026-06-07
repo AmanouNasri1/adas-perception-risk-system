@@ -34,12 +34,15 @@ def draw_box(
     track_id: int,
     class_name: str,
     warning: str | None,
+    distance_m: float | None = None,
 ) -> None:
     x1, y1, x2, y2 = [int(v) for v in box]
     color = _BOX_COLORS.get(warning, _BOX_COLORS[None])
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
     label = f"#{track_id} {class_name}"
+    if distance_m is not None:
+        label += f" ~{distance_m:.0f}m"
     if warning:
         label += f" | {warning}"
 
@@ -63,11 +66,14 @@ def draw_hud(
     frame_idx: int,
     fps: float | None,
     active_warnings: list[str],
+    nearest_m: float | None = None,
 ) -> None:
     lines: list[tuple[str, tuple]] = []
     lines.append((f"Frame {frame_idx}", (220, 220, 220)))
     if fps is not None:
         lines.append((f"FPS  {fps:.1f}", (220, 220, 220)))
+    if nearest_m is not None:
+        lines.append((f"Nearest ~{nearest_m:.0f} m (approx)", (50, 210, 255)))
     for w in active_warnings:
         lines.append((f"!! {w}", (60, 60, 255)))
 

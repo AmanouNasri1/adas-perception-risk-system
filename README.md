@@ -12,6 +12,7 @@ Computer-vision pipeline: YOLO object detection → multi-object tracking → ri
 | Phase 4 — Metrics & polish | Done | `outputs/reports/demo_metrics.csv`, `outputs/figures/fps_plot.png` |
 | V2 — Evaluation | Done | `outputs/figures/confidence_hist.png`, `outputs/figures/tracker_comparison.png`, `outputs/figures/failure_case_*.png`, `outputs/reports/tracker_comparison.csv` |
 | V3 — KITTI fine-tuning | Done | `outputs/reports/kitti_training_results.csv`, `outputs/figures/kitti_training_curve.png` |
+| V4 — Distance estimation | Done | Distance overlay on demo video, `distance_m` column in `warnings.csv` |
 
 ## Architecture
 
@@ -188,6 +189,31 @@ imgsz 640) in Google Colab on a T4 GPU. Weights stored on Google Drive — not i
 The model converged smoothly over 50 epochs with no plateau; losses were still decreasing
 at epoch 50, suggesting additional epochs would yield marginal gains.
 Training curve: `outputs/figures/kitti_training_curve.png`.
+
+### V4 — Distance Estimation
+
+Monocular heuristic distance estimation added to the ADAS demo pipeline using
+bounding-box height: `D = f_y × H_real / h_bbox_pixels`.
+
+| Parameter | Value |
+|-----------|-------|
+| Method | Heuristic (bounding-box height) |
+| Focal length `f_y` | 900 px (dashcam default) or KITTI P2 calib via `--calib` |
+| Distance range displayed | 2 – 80 m |
+| Video | 1280×720, 4967 frames, fine-tuned `yolo11s_kitti.pt` |
+| Average FPS | 33.8 |
+| Warning events | 6087 across all frames |
+| Distance range observed | 2.6 – 55.4 m (mean 15.6 m) |
+
+Distance is displayed on each bounding box as `~Xm` and logged as `distance_m` in
+`warnings.csv`. The nearest detected vehicle per frame is shown in the HUD.
+Labeled *heuristic (approx)* throughout — not suitable for safety-critical decisions.
+
+To use KITTI calibration instead of the default focal length:
+```powershell
+python scripts/run_adas_demo.py --source data/samples/test_video.mp4 `
+    --calib D:\kitti\training\calib\000042.txt
+```
 
 ## Limitations
 

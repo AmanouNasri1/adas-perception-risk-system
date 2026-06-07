@@ -1,0 +1,24 @@
+# Camera parameters for monocular distance estimation (V4).
+#
+# Provide a KITTI calib .txt file via --calib for calibration-based f_y.
+# Without --calib, default_focal_length_y is used (heuristic mode).
+#
+# The formula is: D = f_y * H_real / h_bbox_pixels
+# Outputs are labelled "heuristic (approx)" — not for safety-critical decisions.
+
+# Focal length in pixels for a typical dashcam at 1280x720.
+# Tune if distances look systematically too high or too low.
+default_focal_length_y: 900.0
+
+# Approximate real-world object heights (metres, mid-range values).
+known_heights_m:
+  car:        1.50
+  truck:      2.60
+  bus:        3.20
+  motorcycle: 1.50
+  person:     1.75
+  bicycle:    1.10
+
+# Estimates outside this range are suppressed (bbox too small or too close).
+min_distance_m: 2.0
+max_distance_m: 80.0

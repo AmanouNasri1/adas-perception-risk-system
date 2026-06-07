@@ -1,4 +1,4 @@
-model: yolo11s.pt # use yolo11n.pt if laptop is slow
+model: D:\kitti\weights\yolo11s_kitti.pt # use yolo11n.pt if laptop is slow
 imgsz: 640
 conf: 0.35
 iou: 0.50

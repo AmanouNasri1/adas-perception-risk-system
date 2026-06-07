@@ -11,15 +11,19 @@ from adas_perception.risk.warning_engine import (
     load_zones, get_warnings, top_warning, compute_iou,
     PRIORITY, BICYCLE_PERSON_OVERLAP_IOU,
 )
+from adas_perception.risk.distance import parse_kitti_calib, estimate_distance
 from adas_perception.visualization.annotator import draw_zones, draw_box, draw_hud
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="ADAS demo — tracking + risk zones + warnings")
+    p = argparse.ArgumentParser(description="ADAS demo — tracking + risk zones + warnings + distance")
     p.add_argument("--source",         required=True)
     p.add_argument("--config",         default="configs/detector.yaml")
     p.add_argument("--tracker-config", default="configs/tracker.yaml")
     p.add_argument("--zone-config",    default="configs/risk_zones.yaml")
+    p.add_argument("--camera-config",  default="configs/camera.yaml")
+    p.add_argument("--calib",          default=None,
+                   help="KITTI calib .txt for calibration-based f_y (optional)")
     p.add_argument("--model",          default=None)
     p.add_argument("--conf",           type=float, default=None)
     p.add_argument("--iou",            type=float, default=None)
@@ -36,6 +40,7 @@ def main():
     det_cfg  = load_config(args.config)
     trk_cfg  = load_config(args.tracker_config)
     zone_cfg = load_config(args.zone_config)
+    cam_cfg  = load_config(args.camera_config)
 
     model_name  = args.model or det_cfg["model"]
     conf        = args.conf  if args.conf  is not None else det_cfg["conf"]
@@ -43,6 +48,18 @@ def main():
     imgsz       = args.imgsz if args.imgsz is not None else det_cfg["imgsz"]
     tracker     = trk_cfg["tracker_type"]
     class_names = det_cfg.get("classes_of_interest", [])
+
+    # Distance estimation setup.
+    if args.calib:
+        intrinsics = parse_kitti_calib(args.calib)
+        fy = intrinsics["fy"]
+        dist_mode = f"calibrated (f_y={fy:.1f})"
+    else:
+        fy = cam_cfg["default_focal_length_y"]
+        dist_mode = f"heuristic (f_y={fy:.1f})"
+    known_heights = cam_cfg["known_heights_m"]
+    min_dist = cam_cfg["min_distance_m"]
+    max_dist = cam_cfg["max_distance_m"]
 
     cap = cv2.VideoCapture(args.source)
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -78,10 +95,13 @@ def main():
         persist=True,
     )
 
-    fps_buf       = deque(maxlen=30)   # rolling window for HUD display
+    fps_buf       = deque(maxlen=30)
     frame_timings = []
     frame_idx     = 0
     warning_rows  = 0
+
+    print(f"Distance mode : {dist_mode}")
+    print(f"Source        : {args.source}  ({frame_w}x{frame_h} @ {src_fps:.0f} fps)")
 
     with (
         out_warnings.open("w", newline="", encoding="utf-8") as wf,
@@ -89,7 +109,7 @@ def main():
     ):
         warn_w = csv.writer(wf)
         warn_w.writerow(["frame", "track_id", "class_name", "warning_type",
-                         "x1", "y1", "x2", "y2"])
+                         "distance_m", "x1", "y1", "x2", "y2"])
         track_w = csv.writer(tf)
         track_w.writerow(["frame", "track_id", "class_id", "class_name",
                            "confidence", "x1", "y1", "x2", "y2"])
@@ -98,7 +118,7 @@ def main():
             t_frame = time.perf_counter()
             frame   = result.orig_img.copy()
             names   = result.names
-            speed   = result.speed   # {'preprocess': ms, 'inference': ms, 'postprocess': ms}
+            speed   = result.speed
 
             boxes_this_frame: list[tuple] = []
             if result.boxes is not None:
@@ -122,7 +142,14 @@ def main():
             draw_zones(frame, front_poly, ped_cyc_poly)
 
             active_warnings: list[str] = []
+            nearest_m: float | None = None
+
             for tid, cls_id, cls_nm, conf_v, coords in boxes_this_frame:
+                dist_m = estimate_distance(coords, cls_nm, fy, known_heights,
+                                           min_dist, max_dist)
+                if dist_m is not None:
+                    nearest_m = dist_m if nearest_m is None else min(nearest_m, dist_m)
+
                 warns = get_warnings(cls_nm, coords, frame_h,
                                      front_poly, ped_cyc_poly, close_cfg)
 
@@ -133,22 +160,21 @@ def main():
                         warns.append("CYCLIST RISK")
 
                 best = top_warning(warns)
-                draw_box(frame, coords, tid, cls_nm, best)
+                draw_box(frame, coords, tid, cls_nm, best, distance_m=dist_m)
 
+                dist_str = f"{dist_m:.1f}" if dist_m is not None else ""
                 for w in warns:
-                    warn_w.writerow([frame_idx, tid, cls_nm, w,
+                    warn_w.writerow([frame_idx, tid, cls_nm, w, dist_str,
                                      *[f"{v:.1f}" for v in coords]])
                     warning_rows += 1
                     if w not in active_warnings:
                         active_warnings.append(w)
 
-            # HUD shows rolling FPS from previous frames (one-frame lag — imperceptible).
             fps_hud = sum(fps_buf) / len(fps_buf) if fps_buf else 0.0
             active_warnings.sort(key=lambda w: -PRIORITY.get(w, 0))
-            draw_hud(frame, frame_idx, fps_hud, active_warnings)
+            draw_hud(frame, frame_idx, fps_hud, active_warnings, nearest_m=nearest_m)
             vwriter.write(frame)
 
-            # Compute full per-frame time (YOLO stages + annotation + video write).
             annotation_ms = (time.perf_counter() - t_frame) * 1000
             total_ms = (speed.get("preprocess", 0.0) + speed.get("inference", 0.0)
                         + speed.get("postprocess", 0.0) + annotation_ms)
@@ -165,7 +191,6 @@ def main():
 
     vwriter.release()
 
-    # Save per-frame timings.
     with out_timings.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=[
             "frame", "preprocess_ms", "inference_ms",
@@ -183,6 +208,7 @@ def main():
     print(f"  Average FPS          : {avg_fps:.1f}")
     print(f"  Avg inference (ms)   : {avg_inf:.1f}")
     print(f"  Warning rows         : {warning_rows}")
+    print(f"  Distance mode        : {dist_mode}")
     print(f"  Demo video           : {out_video}")
     print(f"  Warnings CSV         : {out_warnings}")
     print(f"  Tracking CSV         : {out_tracking}")
